@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Let's get some events</title>
+    <style>
+        #target {
+            margin: 10px 0 0;
+            padding: 5px;
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+            gap: 10px;
+        }
+        
+        .value {
+            border: 1px solid rebeccapurple;
+            padding: 5px;
+            border-radius: 5px;
+        }
+        
+        .done {
+            background-color: lawngreen;
+        }
+    </style>
+    <script>
+        async function start() {
+            const target = document.querySelector("#target");
+            target.classList.remove("done");
+            target.innerHTML = "";
+            for await (let value of iterateEventSource("/api/events", "Timestamp")) {
+                const li = document.createElement("li");
+                li.innerText = value.value;
+                li.classList.add("value")
+                target.appendChild(li);
+            }
+            target.classList.add("done");
+        }
+        
+        function iterateEventSource(url, eventName) {
+            let isWaiting = false;
+            let resolveEventAvailable;
+            let eventAvailableSignal = new Promise(res => resolveEventAvailable = res);
+            let eventQueue = [];
+            const evtSrc = new EventSource(url);
+            evtSrc.addEventListener(eventName, evt => {
+                const value = JSON.parse(evt.data);
+                eventQueue.push({ value, done: false});
+                if (isWaiting) {
+                    resolveEventAvailable();
+                    eventAvailableSignal = new Promise(res => resolveEventAvailable = res);
+                }
+            });
+            evtSrc.addEventListener("close", evt => {
+                eventQueue.push({ done: true });
+                if (isWaiting) {
+                    resolveEventAvailable();
+                }
+                evtSrc.close();
+            });
+            return {
+                [Symbol.asyncIterator]: () => {
+                    return {
+                        next: () => {
+                            if (eventQueue.length > 0) {
+                                const consumedEvent = eventQueue.shift();
+                                return new Promise(res => res(consumedEvent));
+                            }
+                            isWaiting = true;
+                            return new Promise(async res => {
+                                await eventAvailableSignal;
+                                isWaiting = false;
+                                const consumedEvent = eventQueue.shift();
+                                res(consumedEvent);
+                            })
+                        }
+                    }
+                }
+            }
+            
+        }
+        
+    </script>
+</head>
+<body>
+<h1>Start listening to some events by clicking the button</h1>
+<button onclick="start()">Start</button>
+<ul id="target"></ul>
+</body>
+</html>
